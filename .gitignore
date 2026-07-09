@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+.venv/
+venv/
+env/
+
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# model cache if downloaded next to the project
+models/
+
+# runtime state (whisper.log contains transcribed dictations - never publish)
+whisper.log
+whisper.pid
+config.json
+.claude/

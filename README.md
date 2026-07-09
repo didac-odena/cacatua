@@ -97,4 +97,4 @@ Todo se cambia en constantes al principio de `main.py`:
 
 ## Licencia
 
-Uso personal.
+MIT — ver [LICENSE](LICENSE).

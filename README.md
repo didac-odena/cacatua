@@ -1,4 +1,4 @@
-# Whisper dictation
+# Cacatúa 🦜
 
 Dictado por voz local para Windows usando `faster-whisper`. Equivalente al dictado nativo (Win+H) pero con mejor transcripción, idioma español, arranque automático y watchdog.
 

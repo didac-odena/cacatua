@@ -15,6 +15,8 @@ Dictado por voz local para Windows usando `faster-whisper`. Equivalente al dicta
 - Windows 10 u 11.
 - Python 3.11 o superior ([python.org](https://www.python.org/downloads/)). Al instalar, marca "Add Python to PATH".
 - GPU NVIDIA (opcional pero recomendado). Sin NVIDIA funciona igual pero en CPU, mucho más lento.
+
+> **Nota — comprueba antes de instalar si el PC tiene NVIDIA**: todo esto está pensado para funcionar con GPU NVIDIA. Para saberlo, abre una terminal y ejecuta `nvidia-smi` — si muestra una tabla con la GPU, tienes NVIDIA; si da "command not found", no la tienes y correrá en CPU (funciona, pero la transcripción es mucho más lenta). El `install.ps1` hace esta comprobación automáticamente e instala las librerías CUDA solo si detecta la GPU.
 - ~3 GB de disco para el entorno virtual + modelo.
 
 ## Instalación rápida

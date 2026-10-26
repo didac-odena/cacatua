@@ -13,8 +13,28 @@ import sys
 import threading
 import time
 import tkinter as tk
-import winsound
 from pathlib import Path
+
+# On Linux (Wayland) apps can't grab global hotkeys, so the desktop's own
+# shortcut runs `main.py --toggle` / `--quit`, which just pokes the running
+# instance through this socket. Handled before the heavy imports to be instant.
+CONTROL_SOCKET = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "cacatua.sock"
+CONTROL_COMMANDS = ("--toggle", "--quit")
+
+
+def send_control_command(command: str) -> bool:
+    import socket
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.connect(str(CONTROL_SOCKET))
+            sock.sendall(command.encode())
+        return True
+    except OSError:
+        return False
+
+
+if len(sys.argv) > 1 and sys.argv[1] in CONTROL_COMMANDS:
+    sys.exit(0 if send_control_command(sys.argv[1].lstrip("-")) else 1)
 
 _LOG_PATH = Path(__file__).resolve().parent / "whisper.log"
 try:
@@ -32,9 +52,11 @@ if sys.platform == "win32":
         if _dll_dir.is_dir():
             os.add_dll_directory(str(_dll_dir))
 
-from ctypes import wintypes
+    import winsound
+    from ctypes import wintypes
 
-import keyboard
+    import keyboard
+
 import numpy as np
 import pyperclip
 import pystray
@@ -72,12 +94,21 @@ except Exception:
 AVAILABLE_MODELS = ("small", "medium")
 DEFAULT_MODEL = "small"
 
+# Whisper only sees the last ~224 tokens of the prompt, so keep it compact.
+# The jargon list biases it towards spelling tech terms right instead of
+# phonetically ("LangGraph", not "lang graf").
 INITIAL_PROMPT = (
     "Hola, ¿qué tal? Estoy dictando al ordenador en español. "
     "A veces hablo rápido; otras veces me paro a pensar. "
     "Quiero que la puntuación sea correcta: comas, puntos, "
     "signos de interrogación como ¿esto? y exclamaciones "
-    "como ¡así! También puntos y comas; y algún guion, claro."
+    "como ¡así! También puntos y comas; y algún guion, claro. "
+    "Soy programador y trabajo con IA: Claude, Claude Code, LLM, prompts, "
+    "agentes, RAG, embeddings, MCP, LangChain, LangGraph y LangSmith. "
+    "Programo en Python con uv, venv y FastAPI; uso Docker, Docker Compose, "
+    "Linux, VSCode, Git, GitHub y GitLab: commit, push, pull request, "
+    "merge request, branch, pipeline, deploy, endpoint, API, JSON, "
+    "frontend y backend. En el curro uso Notion, Teams y Outlook."
 )
 
 VAD_PARAMETERS = {
@@ -151,6 +182,11 @@ def _scale_color(hex_color: str, factor: float) -> str:
 
 ACCENT_DIM = _scale_color(ACCENT, 0.35)
 
+if sys.platform == "win32":
+    PILL_FONT = ("Segoe UI Semibold", 10)
+else:
+    PILL_FONT = ("Noto Sans", 10, "bold")
+
 TRAY_TOOLTIP = "Whisper — F9 para dictar"
 
 CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
@@ -159,10 +195,30 @@ RESTART_SCRIPT_PATH = Path(__file__).resolve().parent / "restart.ps1"
 
 SOUNDS_ENABLED = True
 
+BEEP_SAMPLE_RATE = 44100
+
+# Linux: Ctrl+V is sent through ydotool (uinput), the only way to inject keys
+# into other apps on Wayland. Codes are KEY_LEFTCTRL=29 and KEY_V=47.
+PASTE_KEYS_CMD = ["ydotool", "key", "29:1", "47:1", "47:0", "29:0"]
+
 
 def beep(frequency: int, duration_ms: int) -> None:
-    if SOUNDS_ENABLED:
+    if not SOUNDS_ENABLED:
+        return
+    if sys.platform == "win32":
         winsound.Beep(frequency, duration_ms)
+        return
+    t = np.arange(int(BEEP_SAMPLE_RATE * duration_ms / 1000)) / BEEP_SAMPLE_RATE
+    tone = 0.25 * np.sin(2 * np.pi * frequency * t)
+    fade = min(tone.size // 4, BEEP_SAMPLE_RATE // 200)
+    if fade:
+        ramp = np.linspace(0.0, 1.0, fade)
+        tone[:fade] *= ramp
+        tone[-fade:] *= ramp[::-1]
+    try:
+        sd.play(tone.astype(np.float32), BEEP_SAMPLE_RATE, blocking=True)
+    except Exception as exc:
+        print(f"[beep error] {exc}", file=sys.stderr)
 
 PREFERRED_HOSTAPIS = ("Windows WASAPI", "MME", "Windows DirectSound")
 
@@ -215,6 +271,16 @@ def save_config(cfg: dict) -> None:
 def list_input_devices() -> list[tuple[int, str]]:
     devices = sd.query_devices()
     hostapis = sd.query_hostapis()
+    if sys.platform.startswith("linux"):
+        # PipeWire/PulseAudio route "default" to the mic chosen in the desktop's
+        # sound settings; the raw ALSA hw devices often reject 16 kHz.
+        result = [
+            (i, d["name"])
+            for i, d in enumerate(devices)
+            if d["max_input_channels"] > 0 and d["name"] == "default"
+        ]
+        if result:
+            return result
     for hostapi_name in PREFERRED_HOSTAPIS:
         idx = next(
             (i for i, h in enumerate(hostapis) if h["name"] == hostapi_name),
@@ -454,10 +520,20 @@ class Recorder:
 
     def _deliver(self, text: str) -> None:
         pyperclip.copy(text)
-        if AUTO_PASTE:
+        if not AUTO_PASTE:
+            return
+        if sys.platform == "win32":
             self._focus_target()
             time.sleep(0.08)
             keyboard.send("ctrl+v")
+            return
+        # On Wayland the global shortcut never moves focus, so the original
+        # window is still focused: just paste.
+        time.sleep(0.08)
+        try:
+            subprocess.run(PASTE_KEYS_CMD, check=True, capture_output=True, timeout=5)
+        except Exception as exc:
+            print(f"[paste error] {exc}", file=sys.stderr)
 
 
 class ControlPanel:
@@ -505,7 +581,7 @@ class ControlPanel:
 
         self.status = tk.Label(
             container, text="Esperando", fg=FG_MUTED, bg=BG,
-            font=("Segoe UI Semibold", 10),
+            font=PILL_FONT,
         )
         self.status.pack(side="left", padx=(8, 0))
 
@@ -636,7 +712,12 @@ class TrayController:
         )
 
     def run(self) -> None:
-        self.icon.run_detached()
+        if sys.platform == "win32":
+            self.icon.run_detached()
+        else:
+            # The GTK/AppIndicator backend needs its own GLib loop; tk owns the
+            # main thread.
+            threading.Thread(target=self.icon.run, daemon=True).start()
 
     # -- state / blink, called from the tk thread --------------------------
 
@@ -707,6 +788,7 @@ class TrayController:
     def _apply_device(self, name: str) -> None:
         self.on_device_change(name)
         self.current_device = name
+        self.icon.update_menu()
 
     def _device_visible(self, name, _item) -> bool:
         return name not in self.hidden_devices
@@ -719,6 +801,7 @@ class TrayController:
         current = load_config()
         current["hidden_devices"] = sorted(self.hidden_devices)
         save_config(current)
+        self.icon.update_menu()
 
     # -- model -----------------------------------------------------------
 
@@ -750,6 +833,7 @@ class TrayController:
         else:
             self.panel.set_state("error")
         self.set_state("idle")
+        self.icon.update_menu()
 
     # -- sounds ------------------------------------------------------------
 
@@ -760,10 +844,14 @@ class TrayController:
         current = load_config()
         current["sounds"] = self.sounds_enabled
         save_config(current)
+        self.icon.update_menu()
 
     # -- restart / exit ------------------------------------------------------
 
     def _select_restart(self, _icon, _item) -> None:
+        if sys.platform != "win32":
+            # Same PID, so systemd keeps supervising it.
+            os.execv(sys.executable, [sys.executable, *sys.argv])
         subprocess.Popen(
             [
                 "powershell.exe", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
@@ -822,6 +910,35 @@ def run_hotkey_thread(on_toggle, on_exit) -> None:
                 return
 
 
+def bind_control_socket():
+    """Linux single-instance lock + command channel for the desktop shortcuts.
+
+    Returns the listening socket, or None if another instance owns it.
+    """
+    import socket
+    if send_control_command("ping"):
+        return None
+    CONTROL_SOCKET.unlink(missing_ok=True)
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(CONTROL_SOCKET))
+    server.listen()
+    atexit.register(CONTROL_SOCKET.unlink, missing_ok=True)
+    return server
+
+
+def run_control_socket_thread(server, on_toggle, on_exit) -> None:
+    print("Control socket ready: main.py --toggle / --quit", file=sys.stderr)
+    while True:
+        conn, _ = server.accept()
+        with conn:
+            command = conn.recv(64).decode(errors="ignore").strip()
+        if command == "toggle":
+            on_toggle()
+        elif command == "quit":
+            on_exit()
+            return
+
+
 def load_model(name: str) -> WhisperModel:
     print(
         f"Loading faster-whisper model ({name}) on {DEVICE}/{COMPUTE_TYPE}...",
@@ -840,6 +957,16 @@ def main() -> None:
             file=sys.stderr,
         )
         return
+
+    control_server = None
+    if sys.platform != "win32":
+        control_server = bind_control_socket()
+        if control_server is None:
+            print(
+                "Another Whisper instance is already running. Exiting.",
+                file=sys.stderr,
+            )
+            return
 
     write_pid_file()
 
@@ -909,11 +1036,19 @@ def main() -> None:
     )
     tray.run()
 
-    threading.Thread(
-        target=run_hotkey_thread,
-        args=(recorder.toggle, lambda: root.after(0, tray.stop_and_destroy)),
-        daemon=True,
-    ).start()
+    on_exit = lambda: root.after(0, tray.stop_and_destroy)
+    if sys.platform == "win32":
+        threading.Thread(
+            target=run_hotkey_thread,
+            args=(recorder.toggle, on_exit),
+            daemon=True,
+        ).start()
+    else:
+        threading.Thread(
+            target=run_control_socket_thread,
+            args=(control_server, recorder.toggle, on_exit),
+            daemon=True,
+        ).start()
 
     blink_state = {"bright": True}
 

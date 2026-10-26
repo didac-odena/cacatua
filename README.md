@@ -1,6 +1,6 @@
 # Cacatúa 🦜
 
-Dictado por voz local para Windows usando `faster-whisper`. Equivalente al dictado nativo (Win+H) pero con mejor transcripción, idioma español, arranque automático y watchdog.
+Dictado por voz local para Windows y Linux usando `faster-whisper`. Equivalente al dictado nativo (Win+H) pero con mejor transcripción, idioma español, arranque automático y watchdog.
 
 ## Qué hace
 
@@ -18,6 +18,23 @@ Dictado por voz local para Windows usando `faster-whisper`. Equivalente al dicta
 
 > **Nota — comprueba antes de instalar si el PC tiene NVIDIA**: todo esto está pensado para funcionar con GPU NVIDIA. Para saberlo, abre una terminal y ejecuta `nvidia-smi` — si muestra una tabla con la GPU, tienes NVIDIA; si da "command not found", no la tienes y correrá en CPU (funciona, pero la transcripción es mucho más lenta). El `install.ps1` hace esta comprobación automáticamente e instala las librerías CUDA solo si detecta la GPU.
 - ~3 GB de disco para el entorno virtual + modelo.
+
+## Linux (Arch / EndeavourOS + KDE Plasma en Wayland)
+
+```bash
+git clone <url-del-repo> ~/proyectos/cacatua
+cd ~/proyectos/cacatua
+./install.sh
+systemctl --user start cacatua
+```
+
+El instalador instala los paquetes del sistema (`tk`, `python-gobject`, `libayatana-appindicator`, `wl-clipboard`, `ydotool`), crea el venv, registra un servicio de usuario de systemd que arranca al iniciar sesión y lo relanza si muere, y asigna los atajos **F9** y **Ctrl+Alt+Q** en KDE.
+
+Diferencias con Windows:
+- En Wayland las apps no pueden capturar teclas globales: es KDE quien escucha F9 y ejecuta `main.py --toggle`, que avisa a la instancia en marcha. El atajo se cambia en *Preferencias del sistema → Atajos de teclado* ("Cacatua: dictar").
+- El texto se pega con Ctrl+V simulado vía `ydotool`. En terminales (Konsole) se pega con Ctrl+Shift+V, así que ahí queda en el portapapeles y lo pegas tú.
+- El micrófono se elige en la configuración de sonido del sistema; el menú de la bandeja solo muestra `default`.
+- Logs: `whisper.log` o `journalctl --user -u cacatua`. Reiniciar: `systemctl --user restart cacatua`.
 
 ## Instalación rápida
 

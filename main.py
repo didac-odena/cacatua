@@ -159,6 +159,10 @@ def strip_hallucinations(text: str) -> str:
             if new_text != text:
                 text = new_text
                 changed = True
+    # On near-silent audio Whisper sometimes echoes the prompt back.
+    sentences = [s for s in re.split(r"(?<=[.?!])\s+", text.strip()) if s]
+    if sentences and all(s in INITIAL_PROMPT for s in sentences):
+        return ""
     return text.strip()
 
 WIN_W, WIN_H = 180, 38

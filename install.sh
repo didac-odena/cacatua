@@ -75,6 +75,7 @@ Type=Application
 Name=$2
 Exec=$venv/bin/python $root/main.py $3
 Icon=audio-input-microphone
+StartupNotify=false
 NoDisplay=true
 X-KDE-Shortcuts=$4
 EOF
